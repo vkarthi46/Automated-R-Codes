@@ -1,0 +1,287 @@
+#--------------------------------------------------------------------------------
+# File-Name:       Automated code for Multiple Time Series Data's-Day level.R          
+# Date:            2015/10                                
+# Author:          KARTHI.V-Machine Learning Practioner
+# Email:           karthiv46@gmail.com
+# Github:          https://github.com/vkarthi46
+
+# All source code is copyright (c) 2015, under the Simplified BSD License.  
+# For more information on FreeBSD see: http://www.opensource.org/licenses/bsd-license.php
+
+# All images and materials produced by this code are licensed under the Creative Commons 
+# Attribution-Share Alike 3.0 United States License: http://creativecommons.org/licenses/by-sa/3.0/us/
+
+# All rights reserved.
+
+# Read me
+# First Five Columns Should be Date,Day(Full Name),WOM(Week of the Month),Month,Year
+# This code will work only for 7-days
+
+#-------------------------------------------------------------------------------------------------------------
+# Working Directory
+setwd("C:\\Users\\vkarth2\\Desktop\\POC-New\\Omagha")
+# Reading The Data
+data=read.csv("C:\\Users\\vkarth2\\Desktop\\data.csv")
+Lob_Names=foreach(j=seq(6,length(data),2)) %do% { jl=colnames(data);Lob_Names=jl[j];}
+colnames(data)=c("Date","Day","WOM","Month","Year");data$Date=as.Date(data$Date,format="%d-%B-%y");data$WOM=as.factor(data$WOM);data$Day=as.factor(data$Day);
+
+# Required Packages
+pacman::p_load(dplyr,data.table,zoo,DescTools,forecast,foreach,doParallel,AER,pscl,MASS,stats,e1071,kernlab,earth,caret,randomForest,nnet) 
+
+# Required Information
+Start_Month="Aug-2015"
+Lead_time=.1
+No_Months_BF=2
+Days=7
+Year=365
+Week=round(Year/Days)
+Seasonal_list=c(Days)
+No_ahead=750
+
+#----------------------------------Basic Function------------------------------------------------------------------------------
+# Creating Time Series Data
+ts_data=foreach(i=seq(7,length(data),2)) %do% { ts(data[,i],frequency=Days);}
+msts_data=foreach(i=seq(7,length(data),2)) %do% { msts(data[,i],seasonal.periods = Seasonal_list);}
+# Last dates of Backast
+Last_dates_Back=data.frame(matrix(nrow=1,ncol=No_Months_BF));for(i in 1:No_Months_BF){Last_dates_Back[i]=AddMonths(as.Date(as.yearmon(Start_Month,"%b-%Y") -Lead_time, frac = 1),i-1);}
+#Last Dates of Future Month
+Last_dates_Future=data.frame(matrix(nrow=1,ncol=No_Months_BF));for(i in 1:No_Months_BF){Last_dates_Future[i]=AddMonths(as.Date(as.yearmon(Start_Month,"%b-%Y"),frac=1),i-1);}
+# No ahead_Backast
+No_ahead_BF=data.frame(matrix(nrow=1,ncol=No_Months_BF));for(i in 1:No_Months_BF){No_ahead_BF[i]=as.numeric(Last_dates_Future[,i]-Last_dates_Back[,i]);}
+
+#-------------------------------Fitting Different Models------------------------------------------------------------------------------------------------------
+# ---------------------------Data Driven Approach--------------
+# Seasonal ARIMA
+fit_ARIMA=foreach(i=1:No_Months_BF) %:% foreach(j=seq(7,length(data),2)) %do% { auto.arima(ts((data[data$Date<=Last_dates_Back[,i],j]),frequency=Days),seasonal=TRUE,stepwise=TRUE,approximation=FALSE, trace=TRUE,D=1,max.P = 10, max.Q = 10);}
+# Exponential Smoothing State Space Model
+fit_TBATS=foreach(i=1:No_Months_BF) %:% foreach(j=seq(7,length(data),2)) %do% {tbats(msts((data[data$Date<=Last_dates_Back[,i],j]),seasonal.periods= Seasonal_list),seasonal.periods=Seasonal_list);}
+# Winter-Holts
+fit_WH=foreach(i=1:No_Months_BF) %:% foreach(j=seq(7,length(data),2)) %do% { ets(ts((data[data$Date<=Last_dates_Back[,i],j]),frequency=Days));}
+# Seasonal Decomposition
+fit_SD=foreach(i=1:No_Months_BF) %:% foreach(j=seq(7,length(data),2)) %do% { stl(ts((data[data$Date<=Last_dates_Back[,i],j]),frequency=Days), t.window=15, s.window="periodic", robust=TRUE);}
+#------------------------- Model Driven Approach-----------------------------------------------------------
+# Multiple Linear Regression Model
+fit_LM=foreach(i=1:No_Months_BF) %:% foreach(j=seq(7,length(data),2)) %do% { Day_1=as.factor(data[data$Date<=Last_dates_Back[,i],2]);WOM_1=as.factor(data[data$Date<=Last_dates_Back[,i],3]);
+lm((data[data$Date<=Last_dates_Back[,i],j])~Day_1+WOM_1,data=data);}
+# Inhomogeneous Poisson Regression Model
+fit_glm=foreach(i=1:No_Months_BF) %:% foreach(j=seq(7,length(data),2)) %do% { Day_1=as.factor(data[data$Date<=Last_dates_Back[,i],2]);WOM_1=as.factor(data[data$Date<=Last_dates_Back[,i],3]);
+glm((data[data$Date<=Last_dates_Back[,i],j])~Day_1+WOM_1,data=data,family = quasipoisson());}
+# Support Vector Regression
+fit_svm=foreach(i=1:No_Months_BF) %:% foreach(j=seq(7,length(data),2)) %do% { Day_1=as.factor(data[data$Date<=Last_dates_Back[,i],2]);WOM_1=as.factor(data[data$Date<=Last_dates_Back[,i],3]);
+svm((data[data$Date<=Last_dates_Back[,i],j])~Day_1+WOM_1,data=data,probability = TRUE);}
+# Random Forest
+fit_RF=foreach(i=1:No_Months_BF) %:% foreach(j=seq(7,length(data),2)) %do%  { Day_1=as.factor(data[data$Date<=Last_dates_Back[,i],2]);WOM_1=as.factor(data[data$Date<=Last_dates_Back[,i],3]);
+randomForest((data[data$Date<=Last_dates_Back[,i],j])~Day_1+WOM_1,data=data,ntree=1000);}
+# Artificial Neural Network
+fit_NN=foreach(i=1:No_Months_BF) %:% foreach(j=seq(7,length(data),2)) %do%  { Day_1=as.factor(data[data$Date<=Last_dates_Back[,i],2]);WOM_1=as.factor(data[data$Date<=Last_dates_Back[,i],3]);
+nnet((data[data$Date<=Last_dates_Back[,i],j])~Day_1+WOM_1,data=data,size=12, maxit=10000, linout=T,decay=0.01);}
+# Fitted values of Different Models
+x1=foreach(i=1:No_Months_BF) %:% foreach(j=1:length(seq(7,length(data),2))) %do% { g=fit_ARIMA[[i]]; fitted(g[[j]]);}
+x2=foreach(i=1:No_Months_BF) %:% foreach(j=1:length(seq(7,length(data),2))) %do% { q=fit_TBATS[[i]];fitted(q[[j]]);}
+x3=foreach(i=1:No_Months_BF) %:% foreach(j=1:length(seq(7,length(data),2))) %do% { w=fit_WH[[i]];fitted(w[[j]]);}
+x4=foreach(i=1:No_Months_BF) %:% foreach(j=1:length(seq(7,length(data),2))) %do% { r=fit_LM[[i]];fitted(r[[j]]);}
+x5=foreach(i=1:No_Months_BF) %:% foreach(j=1:length(seq(7,length(data),2))) %do% { t=fit_glm[[i]];fitted(t[[j]]);}
+x6=foreach(i=1:No_Months_BF) %:% foreach(j=1:length(seq(7,length(data),2))) %do% { y=fit_svm[[i]];fitted(y[[j]]);}
+x7=foreach(i=1:No_Months_BF) %:% foreach(j=1:length(seq(7,length(data),2))) %do% { u=fit_NN[[i]];fitted(u[[j]]);}
+Data_FC=foreach(i=1:No_Months_BF) %:% foreach(j=seq(7,length(data),2)) %do% { data[data$Date<=Last_dates_Back[,i],j];}
+# Ensemble Learning
+EL_NN=foreach(i=1:No_Months_BF) %:% foreach(j=1:length(seq(7,length(data),2))) %do% {v1=x1[[i]];v2=x2[[i]];v3=x3[[i]];v4=x4[[i]];v5=x5[[i]];v6=x6[[i]];
+a1=v1[[j]];a2=v2[[j]];a3=v3[[j]];a4=v4[[j]];a5=v5[[j]];a6=v6[[j]];dag=Data_FC[[i]];svm(dag[[j]]~a1+a2+a3+a4+a5+a6,data=data);}
+
+# -----------Creating Sequence of Date----------
+monthweeks=function(x) { UseMethod("monthweeks");}
+monthweeks.Date=function(x) { ceiling(as.numeric(format(x,"%d"))/7);}
+monthweeks.POSIXlt=function(x) {ceiling(as.numeric(format(x,"%d"))/7);}
+monthweeks.character=function(x) {ceiling(as.numeric(format(as.Date(x),"%d"))/7);}
+FC_Dates=foreach(i=1:No_Months_BF) %do% { cbind.data.frame(seq(as.Date(Last_dates_Back[,i]+1),as.Date(Last_dates_Future[,i]),by=1));}
+FC_Days=foreach(i=1:No_Months_BF)  %do% { da1=FC_Dates[[i]];colnames(da1)="Dates";cbind.data.frame(as.factor(weekdays(as.Date(da1$Dates,'%Y-%m-%d'))));}
+FC_WOM=foreach(i=1:No_Months_BF)   %do% { da2=FC_Dates[[i]];colnames(da2)="Dates";cbind.data.frame(as.factor(monthweeks(da2$Date)));}
+test_BF=foreach(i=1:No_Months_BF)  %do% { Dat=FC_Dates[[i]];colnames(Dat)="Dates";Day=FC_Days[[i]];colnames(Day)="Day_1";Wom=FC_WOM[[i]];colnames(Wom)="WOM_1";x=cbind.data.frame(Day_1=Day,WOM_1=Wom);}
+
+#----------------------------------Forecast------------------------------------------------------------------------------------------------------------------------------------
+fc_ARIMA=foreach(i=1:No_Months_BF) %:% foreach(j=1:length(seq(7,length(data),2))) %do% { o=fit_ARIMA[[i]];forecast(o[[j]],h=No_ahead_BF[,i]);}
+fc_TBATS=foreach(i=1:No_Months_BF) %:% foreach(j=1:length(seq(7,length(data),2))) %do% { p=fit_TBATS[[i]];forecast(p[[j]],h=No_ahead_BF[,i]);}
+fc_WH=foreach(i=1:No_Months_BF) %:% foreach(j=1:length(seq(7,length(data),2))) %do% { q1=fit_WH[[i]];forecast(q1[[j]],h=No_ahead_BF[,i]);}
+fc_SD=foreach(i=1:No_Months_BF) %:% foreach(j=1:length(seq(7,length(data),2))) %do% { q2=fit_SD[[i]];forecast(q2[[j]],h=No_ahead_BF[,i]);}
+fc_LM=foreach(i=1:No_Months_BF) %:% foreach(j=1:length(seq(7,length(data),2))) %do% { q3=fit_LM[[i]];new=test_BF[[i]];predict(q3[[j]],newdata=new);}
+fc_glm=foreach(i=1:No_Months_BF) %:% foreach(j=1:length(seq(7,length(data),2))) %do% { q4=fit_glm[[i]];new=test_BF[[i]];exp(predict(q4[[j]],newdata=new));}
+fc_svm=foreach(i=1:No_Months_BF) %:% foreach(j=1:length(seq(7,length(data),2))) %do% { q5=fit_svm[[i]];new=test_BF[[i]];(predict(q5[[j]],newdata=new));}
+fc_RF=foreach(i=1:No_Months_BF) %:% foreach(j=1:length(seq(7,length(data),2))) %do% { q6=fit_RF[[i]];new=test_BF[[i]];(predict(q6[[j]],newdata=new));}
+fc_NN=foreach(i=1:No_Months_BF) %:% foreach(j=1:length(seq(7,length(data),2))) %do% { q7=fit_NN[[i]];new=test_BF[[i]];(predict(q7[[j]],newdata=new));}
+x1_1=foreach(i=1:No_Months_BF) %:% foreach(j=1:length(seq(7,length(data),2))) %do% { g_1=fc_ARIMA[[i]]; p_fc=g_1[[j]];p_fc$mean}
+x2_1=foreach(i=1:No_Months_BF) %:% foreach(j=1:length(seq(7,length(data),2))) %do% { g_2=fc_TBATS[[i]]; q_fc=g_2[[j]];q_fc$mean}
+x3_1=foreach(i=1:No_Months_BF) %:% foreach(j=1:length(seq(7,length(data),2))) %do% { g_3=fc_WH[[i]]; w_fc=g_3[[j]];w_fc$mean}
+x4_1=foreach(i=1:No_Months_BF) %:% foreach(j=1:length(seq(7,length(data),2))) %do% { g_4=fc_LM[[i]]; e_fc=g_4[[j]];}
+x5_1=foreach(i=1:No_Months_BF) %:% foreach(j=1:length(seq(7,length(data),2))) %do% { g_5=fc_glm[[i]]; r_fc=g_5[[j]];}
+x6_1=foreach(i=1:No_Months_BF) %:% foreach(j=1:length(seq(7,length(data),2))) %do% { g_6=fc_svm[[i]]; t_fc=g_6[[j]];}
+x7_1=foreach(i=1:No_Months_BF) %:% foreach(j=1:length(seq(7,length(data),2))) %do% { g_7=fc_NN[[i]]; y_fc=g_7[[j]];}
+x8_1=foreach(i=1:No_Months_BF) %:% foreach(j=1:length(seq(7,length(data),2))) %do% { g_8=fc_SD[[i]]; u_fc=g_8[[j]];u_fc$mean}
+fc_EL=foreach(i=1:No_Months_BF) %:% foreach(j=1:length(seq(7,length(data),2))) %do% { v1_1=x1_1[[i]];v2_1=x2_1[[i]];v3_1=x3_1[[i]];v4_1=x4_1[[i]];v5_1=x5_1[[i]];v6_1=x6_1[[i]];v7_1=x7_1[[i]]; 
+new=cbind.data.frame(a1=v1_1[[j]],a2=v2_1[[j]],a3=v3_1[[j]],a4=v4_1[[j]],a5=v5_1[[j]],a6=v6_1[[j]]);q8=EL_NN[[i]];predict(q8[[j]],newdata=new);}
+x9_1=foreach(i=1:No_Months_BF) %:% foreach(j=1:length(seq(7,length(data),2))) %do% { g_9=fc_EL[[i]]; df_fc=g_9[[j]];}
+x10_1=foreach(i=1:No_Months_BF) %:% foreach(j=1:length(seq(7,length(data),2))) %do% { g_10=fc_RF[[i]]; dd_fc=g_10[[j]];}
+
+# Offered
+Subset_data=foreach(i=1:No_Months_BF) %:% foreach(j=seq(6,length(data),2)) %do% { subset(data, data$Date > Last_dates_Back[,i] & data$Date<=Last_dates_Future[,i],j);}
+# Forecast
+Con_Forecast=foreach(i=1:No_Months_BF) %:% foreach(j=1:length(seq(7,length(data),2))) %do% { xs_1=x1_1[[i]];xs_2=x2_1[[i]];xs_3=x3_1[[i]];xs_4=x4_1[[i]];xs_5=x5_1[[i]];xs_6=x6_1[[i]];xs_7=x7_1[[i]];xs_8=x8_1[[i]];xs_9=x9_1[[i]];xs_10=x10_1[[i]];
+cbind.data.frame(xs_1[[j]],xs_2[[j]],xs_3[[j]],xs_8[[j]],xs_4[[j]],xs_5[[j]],xs_6[[j]],xs_7[[j]],xs_9[[j]],xs_10[[j]])
+}
+# Offered vs Forecast
+Off_FC=foreach(i=1:No_Months_BF) %:% foreach(j=1:length(seq(7,length(data),2))) %do% {sub_data_1=Subset_data[[i]];con_fc_1=Con_Forecast[[i]];cbind.data.frame(sub_data_1[[j]],cbind.data.frame(con_fc_1[[j]]));}
+# Calculation of Error
+Error=foreach(i=1:No_Months_BF) %:% foreach(j=1:length(seq(7,length(data),2))) %do% { Off=Off_FC[[i]];Off_1=Off[[j]];cbind.data.frame(abs(Off_1[,1]-Off_1[,2]),abs(Off_1[,1]-Off_1[,3]),abs(Off_1[,1]-Off_1[,4]),abs(Off_1[,1]-Off_1[,5]),
+abs(Off_1[,1]-Off_1[,6]),abs(Off_1[,1]-Off_1[,7]),abs(Off_1[,1]-Off_1[,8]),abs(Off_1[,1]-Off_1[,9]),abs(Off_1[,1]-Off_1[,10]),abs(Off_1[,1]-Off_1[,11]));}
+Forecast_Dates_BF=foreach(i=1:No_Months_BF) %do% { cbind.data.frame(seq(as.Date(Last_dates_Back[,i]+1),as.Date(Last_dates_Future[,i]),by=1));}
+
+# Consolidated Data
+Con_data_1=foreach(i=1:No_Months_BF) %:% foreach(j=1:length(seq(7,length(data),2))) %do% {mo=Off_FC[[i]];er=Error[[i]];
+da4=Forecast_Dates_BF[[i]];colnames(da4)="Dates_2";cbind.data.frame((Forecast_Dates_BF[[i]]),(as.factor(weekdays(as.Date(da4$Dates_2,'%Y-%m-%d')))),
+(format(Forecast_Dates_BF[[i]],"%U")),(format(Forecast_Dates_BF[[i]],"%b")),(format(Forecast_Dates_BF[[i]],"%Y")),mo[[j]],er[[j]]);}
+
+Acc_Mon=function(x,y){1-(abs(x-y)/x);};Acc_Day=function(x,y){1-(x/y);}
+Day_Ac=foreach(i=1:No_Months_BF) %:% foreach(j=1:length(seq(7,length(data),2))) %do% { k=Con_data_1[[i]];b=k[[j]];g=cbind.data.frame(Acc_Mon(b[,7],b[,6]),Acc_Mon(b[,8],b[,6]),Acc_Mon(b[,9],b[,6]),Acc_Mon(b[,10],b[,6]),
+Acc_Mon(b[,11],b[,6]),Acc_Mon(b[,12],b[,6]),Acc_Mon(b[,13],b[,6]),Acc_Mon(b[,14],b[,6]),Acc_Mon(b[,14],b[,6]),Acc_Mon(b[,15],b[,6]))}
+
+# Consolidated Data
+Con_data=foreach(i=1:No_Months_BF) %:% foreach(j=1:length(seq(7,length(data),2))) %do% { nm=Con_data_1[[i]];nm1=Day_Ac[[i]];data.frame(cbind(nm[[j]],nm1[[j]]));}
+FC_Months=data.frame(cbind(matrix(ncol=No_Months_BF,nrow =1)));for(i in 1:(No_Months_BF)){
+FC_Months[i]=as.factor(format(AddMonths(as.Date(as.yearmon(Start_Month,"%b-%Y"),frac=0),i-1),"%b"));}
+Com_FC_Months=data.frame(cbind(FC_Months));Letters=LETTERS[1:No_Months_BF];colnames(Com_FC_Months)=Letters
+
+Summary=foreach(i=1:No_Months_BF) %:% foreach(j=1:length(seq(7,length(data),2))) %do%  { nm2=Con_data[[i]];n=nm2[[j]]
+colnames(n)=c("Date","Day","Week Number","Month","Year","Offered","ARIMA","TBATS","WH","SD","MLR","PRM","SVM","ANN","EL","RF","Err_ARIMA","Err_TBATS","Err_WH","Err_SD","Err_MLR","Err_PRM","Err_SVM","Err_ANN","Err_EL","Err_RF",
+"Dy_Ac_ARIMA","Dy_Ac_TBATS","Dy_Ac_WH","Dy_Ac_SD","Dy_Ac_MLR","Dy_Ac_PRM","Dy_Ac_SVM","Dy_Ac_ANN","Dy_Ac_EL","Dy_Ac_RF")
+summarise(group_by(n,Month,Year),Offered = sum(Offered),ARIMA=sum(ARIMA),TBATS=sum(TBATS),WH=sum(WH),SD=sum(SD),MLR=sum(MLR),PRM=sum(PRM),SVM=sum(SVM),ANN=sum(ANN),EL=sum(EL),RF=sum(RF),
+Er_ARIMA=sum(Err_ARIMA),Err_TBATS=sum(Err_TBATS),Err_WH=sum(Err_WH),Err_SD=sum(Err_SD),Err_MLR=sum(Err_MLR),Err_PRM=sum(Err_PRM),Err_SVM=sum(Err_SVM),Err_ANN=sum(Err_ANN),Err_ANN=sum(Err_ANN),Err_EL=sum(Err_EL),Err_RF=sum(Err_RF),
+ARIMA_gr=sum(n[,27]>=0.90 & n[,4]==levels(droplevels(Com_FC_Months[,i]))),TBATS_gr=sum(n[,28]>0.90 & n[,4]==levels(droplevels(Com_FC_Months[,i]))),WH_gr=sum(n[,29]>0.90 & n[,4]==levels(droplevels(Com_FC_Months[,i]))),
+SD_gr=sum(n[,30]>0.90 & n[,4]==levels(droplevels(Com_FC_Months[,i]))),MLR_gr=sum(n[,31]>0.90 & n[,4]==levels(droplevels(Com_FC_Months[,i]))),PRM_gr=sum(n[,32]>0.90 & n[,4]==levels(droplevels(Com_FC_Months[,i]))),
+SVM_gr=sum(n[,33]>0.90 & n[,4]==levels(droplevels(Com_FC_Months[,i]))),ANN_gr=sum(n[,34]>0.90 & n[,4]==levels(droplevels(Com_FC_Months[,i]))),EL_gr=sum(n[,35]>0.90 & n[,4]==levels(droplevels(Com_FC_Months[,i]))),
+RF_gr=sum(n[,36]>0.90 & n[,4]==levels(droplevels(Com_FC_Months[,i]))));}
+
+Summary_weekly=foreach(i=1:No_Months_BF) %:% foreach(j=1:length(seq(7,length(data),2))) %do%  { nm3=Con_data[[i]];n2=nm3[[j]]
+colnames(n2)=c("Date","Day","WeekNumber","Month","Year","Offered","ARIMA","TBATS","WH","SD","MLR","PRM","SVM","ANN","EL","RF","Err_ARIMA","Err_TBATS","Err_WH","Err_SD","Err_MLR","Err_PRM","Err_SVM","Err_ANN","Err_EL","Err_RF",
+"Dy_Ac_ARIMA","Dy_Ac_TBATS","Dy_Ac_WH","Dy_Ac_SD","Dy_Ac_MLR","Dy_Ac_PRM","Dy_Ac_SVM","Dy_Ac_ANN","Dy_Ac_EL","Dy_Ac_RF")
+summarise(group_by(n2,WeekNumber,Month,Year),Offered = sum(Offered),ARIMA=sum(ARIMA),TBATS=sum(TBATS),WH=sum(WH),SD=sum(SD),MLR=sum(MLR),PRM=sum(PRM),SVM=sum(SVM),ANN=sum(ANN),EL=sum(EL),RF=sum(RF));}
+
+Month_Acc_Con=foreach(i=1:No_Months_BF) %:% foreach(j=1:length(seq(7,length(data),2))) %do%  { rw=Summary[[i]];r=rw[[j]];
+cbind.data.frame(r[,1],r[,2],(Acc_Mon(r[,4],r[,3])),(Acc_Mon(r[,5],r[,3])),(Acc_Mon(r[,6],r[,3])),(Acc_Mon(r[,7],r[,3])),
+(Acc_Mon(r[,8],r[,3])),(Acc_Mon(r[,9],r[,3])),(Acc_Mon(r[,10],r[,3])),(Acc_Mon(r[,11],r[,3])),(Acc_Mon(r[,12],r[,3])),(Acc_Mon(r[,13],r[,3])));}
+Daily_Acc_Con=foreach(i=1:No_Months_BF) %:% foreach(j=1:length(seq(7,length(data),2))) %do%  { r1w=Summary[[i]];r1=r1w[[j]];
+cbind.data.frame(r1[,1],r1[,2],(Acc_Day(r1[,14],r1[,4])),(Acc_Day(r1[,15],r1[,5])),(Acc_Day(r1[,16],r1[,6])),(Acc_Day(r1[,17],r1[,7])),
+(Acc_Day(r1[,18],r1[,8])),(Acc_Day(r1[,19],r1[,9])),(Acc_Day(r1[,20],r1[,10])),(Acc_Day(r1[,21],r1[,11])),(Acc_Day(r1[,22],r1[,12])),(Acc_Day(r1[,23],r1[,13])));}
+Weekly_Acc_Con=foreach(i=1:No_Months_BF) %:% foreach(j=1:length(seq(7,length(data),2))) %do%  { rw1=Summary_weekly[[i]];r1=rw1[[j]];
+cbind.data.frame(r1[,1],r1[,2],r1[,3],(Acc_Mon(r1[,5],r1[,4])),(Acc_Mon(r1[,6],r1[,4])),(Acc_Mon(r1[,7],r1[,4])),(Acc_Mon(r1[,8],r1[,4])),
+(Acc_Mon(r1[,9],r1[,4])),(Acc_Mon(r1[,10],r1[,4])),(Acc_Mon(r1[,11],r1[,4])),(Acc_Mon(r1[,12],r1[,4])),(Acc_Mon(r1[,13],r1[,4])),(Acc_Mon(r1[,14],r1[,4])));}
+
+No_d=foreach(i=1:No_Months_BF) %:% foreach(j=1:length(seq(7,length(data),2))) %do% {klop=Summary[[i]];klop1=klop[[j]];cbind.data.frame(klop1[,c(1:2,24:33)]);}
+
+Monthly_Accuracy_Summary=foreach(j=1:length(seq(7,length(data),2))) %do% { data.frame(rbind(matrix(nrow=No_Months_BF,ncol=12)));}  
+for(i in 1:No_Months_BF){ for(j in 1:length(seq(7,length(data),2))) { rt=Month_Acc_Con[[i]];
+colnames(Monthly_Accuracy_Summary[[j]])=c("Month","Year","ARIMA","TBATS","WH","SD","MLR","PRM","SVM","ANN","EL","RF");
+Monthly_Accuracy_Summary[[j]][i,]=subset(rt[[j]],rt[[j]]$Month==levels(droplevels(Com_FC_Months[,i])));}}
+
+Daily_Accuracy_Summary=foreach(j=1:length(seq(7,length(data),2))) %do% { data.frame(rbind(matrix(nrow=No_Months_BF,ncol=12)));}  
+for(i in 1:No_Months_BF){ for(j in 1:length(seq(7,length(data),2))) { rt1=Daily_Acc_Con[[i]];
+colnames(Daily_Accuracy_Summary[[j]])=c("Month","Year","ARIMA","TBATS","WH","SD","MLR","PRM","SVM","ANN","EL","RF");
+Daily_Accuracy_Summary[[j]][i,]=subset(rt1[[j]],rt1[[j]]$Month==levels(droplevels(Com_FC_Months[,i])));}}
+
+No_Days_Summary=foreach(j=1:length(seq(7,length(data),2))) %do% { data.frame(rbind(matrix(nrow=No_Months_BF,ncol=12)));}  
+for(i in 1:No_Months_BF){ for(j in 1:length(seq(7,length(data),2))) { rt2=No_d[[i]];
+colnames(No_Days_Summary[[j]])=c("Month","Year","ARIMA","TBATS","WH","SD","MLR","PRM","SVM","ANN","EL","RF");
+No_Days_Summary[[j]][i,]=subset(rt2[[j]],rt2[[j]]$Month==levels(droplevels(Com_FC_Months[,i])));}}
+
+Weekly_Accuracy_Summary=foreach(i=1:No_Months_BF,.combine = 'rbind') %:% foreach(j=1:length(seq(7,length(data),2)),.combine='cbind') %do% { hky=Weekly_Acc_Con[[i]];hky1=hky[[j]];
+Weekly_Accuracy_Summary=subset(hky1,hky1$Month==levels(droplevels(Com_FC_Months[,i])));}
+
+
+# -------------------------Future Forecast------------------------------------------------------------------------
+# Creating Time Series Data
+ts_data=foreach(j=seq(6,length(data),2)) %do% { ts_data=ts(data[,j],frequency=Days);}
+msts_data=foreach(j=seq(6,length(data),2)) %do% { msts_data=msts(data[,j],seasonal.periods = Seasonal_list);}
+# -----------------------------------Building the Time Series Model-------------------------------------------
+fit_ARIMA_Future=foreach(j=1:length(seq(7,length(data),2))) %do% { auto.arima(ts_data[[j]],seasonal=TRUE,stepwise=TRUE,approximation=FALSE, trace=TRUE,D=1,max.P = 6, max.Q = 6,allowdrift = TRUE);}
+fit_TBATS_Future=foreach(j=1:length(seq(7,length(data),2))) %do% { tbats(msts_data[[j]],seasonal.periods=Seasonal_list);}
+fit_WH_Future=foreach(j=1:length(seq(7,length(data),2))) %do% { ets(ts_data[[j]]);}
+fit_SD_Future=foreach(j=1:length(seq(7,length(data),2))) %do% { stl(ts_data[[j]],t.window=15, s.window="periodic", robust=TRUE);}
+fit_MLR_Future=foreach(j=seq(6,length(data),2)) %do%  { WOM_1=as.factor(data$WOM);Day_1=as.factor(data$Day);final_data=data.frame(cbind(data,WOM_1,Day_1));Model=lm(data[,j]~Day_1+WOM_1,data=final_data);}
+fit_PRM_Future=foreach(j=seq(6,length(data),2)) %do%  { WOM_1=as.factor(data$WOM);Day_1=as.factor(data$Day);final_data=data.frame(cbind(data,WOM_1,Day_1));Model=glm(data[,j]~Day_1+WOM_1,data=final_data,family = quasipoisson());}
+fit_SVM_Future=foreach(j=seq(6,length(data),2)) %do%  { WOM_1=as.factor(data$WOM);Day_1=as.factor(data$Day);final_data=data.frame(cbind(data,WOM_1,Day_1));Model=svm(data[,j]~Day_1+WOM_1,data=final_data,probability = TRUE);}
+fit_ANN_Future=foreach(j=seq(6,length(data),2)) %do%  { WOM_1=as.factor(data$WOM);Day_1=as.factor(data$Day);final_data=data.frame(cbind(data,WOM_1,Day_1));Model=nnet(data[,j]~Day_1+WOM_1,data=final_data,size=12, maxit=10000, linout=T,decay=0.01);}
+fit_RF_Future=foreach(j=seq(6,length(data),2)) %do%   { WOM_1=as.factor(data$WOM);Day_1=as.factor(data$Day);final_data=data.frame(cbind(data,WOM_1,Day_1));Model=randomForest(data[,j]~Day_1+WOM_1,data=final_data,ntree=1000);}
+x1_f=foreach(j=1:length(seq(7,length(data),2))) %do% { fitted(fit_ARIMA_Future[[j]]);}
+x2_f=foreach(j=1:length(seq(7,length(data),2))) %do% { fitted(fit_TBATS_Future[[j]]);}
+x3_f=foreach(j=1:length(seq(7,length(data),2))) %do% { fitted(fit_WH_Future[[j]]);}
+x4_f=foreach(j=1:length(seq(7,length(data),2))) %do% { fitted(fit_MLR_Future[[j]]);}
+x5_f=foreach(j=1:length(seq(7,length(data),2))) %do% { fitted(fit_PRM_Future[[j]]);}
+x6_f=foreach(j=1:length(seq(7,length(data),2))) %do% { fitted(fit_SVM_Future[[j]]);}
+x7_f=foreach(j=1:length(seq(7,length(data),2))) %do% { fitted(fit_ANN_Future[[j]]);}
+data_1=foreach(j=seq(6,length(data),2)) %do% {data_1=data[,j];}
+fit_EL_Future=foreach(i=1:length(seq(7,length(data),2))) %do% { b1=as.numeric(x1_f[[i]]);b2=as.numeric(x2_f[[i]]);b3=as.numeric(x3_f[[i]]);b4=as.numeric(x4_f[[i]]);
+b5=as.numeric(x5_f[[i]]);b6=as.numeric(x6_f[[i]]);b7=as.numeric(x7_f[[i]]);lm(data_1[[i]]~b1+b2+b3+b4+b5+b6+b7,data=data_1);}
+
+# -----------------------------------Forecast-------------------------------------------
+# Creating Sequence of Date
+x=cbind.data.frame(data[,1]);st=(x[(nrow(x)),]);v=as.Date((st), format='%d-%B-%y');Date_2=cbind.data.frame(seq(as.Date(v+1),as.Date(v+No_ahead),by=1));colnames(Date_2)="Date";
+f13=as.factor(weekdays(as.Date(Date_2$Date,'%Y-%m-%d')));f23=as.factor(monthweeks(Date_2$Date))
+fl3=cbind.data.frame(as.factor(weekdays(as.Date(Date_2$Date,'%Y-%m-%d'))));colnames(fl3)="Day";fk3=cbind.data.frame(as.factor(monthweeks(Date_2$Date)));colnames(fk3)="WOM";
+# Forecast
+fc_ARIMA_Future=foreach(i=1:length(seq(7,length(data),2))) %do% { forecast(fit_ARIMA_Future[[i]],h=No_ahead);}
+fc_TBATS_Future=foreach(i=1:length(seq(7,length(data),2))) %do% { forecast(fit_TBATS_Future[[i]],h=No_ahead);}
+fc_WH_Future=foreach(i=1:length(seq(7,length(data),2)))    %do% { forecast(fit_WH_Future[[i]],h=No_ahead);}
+fc_SD_Future=foreach(i=1:length(seq(7,length(data),2)))    %do% { forecast(fit_SD_Future[[i]],h=No_ahead);}
+fc_MLR_Future=foreach(i=1:length(seq(7,length(data),2)))   %do% { new=data.frame(Day_1=f13,WOM_1=f23);predict(fit_MLR_Future[[i]],new);}
+fc_PRM_Future=foreach(i=1:length(seq(7,length(data),2)))   %do% { new=data.frame(Day_1=f13,WOM_1=f23);exp(predict(fit_PRM_Future[[i]],new));}
+fc_SVM_Future=foreach(i=1:length(seq(7,length(data),2)))   %do% { new=data.frame(Day_1=f13,WOM_1=f23);predict(fit_SVM_Future[[i]],new);}
+fc_ANN_Future=foreach(i=1:length(seq(7,length(data),2)))   %do% { new=data.frame(Day_1=f13,WOM_1=f23);predict(fit_ANN_Future[[i]],new);}
+fc_RF_Future=foreach(i=1:length(seq(7,length(data),2)))    %do% { new=data.frame(Day_1=f13,WOM_1=f23);predict(fit_RF_Future[[i]],new);}
+# Point Forecast
+Point_forecast_ARIMA=foreach(i=1:length(seq(7,length(data),2))) %do%  { c1=fc_ARIMA_Future[[i]];cbind.data.frame(c1$mean);}
+Point_forecast_TBATS=foreach(i=1:length(seq(7,length(data),2))) %do%  { b6=fc_TBATS_Future[[i]];cbind.data.frame(b6$mean);}
+Point_forecast_WH=foreach(i=1:length(seq(7,length(data),2)))    %do%  { c2=fc_WH_Future[[i]];cbind.data.frame(c2$mean);}
+Point_forecast_SD=foreach(i=1:length(seq(7,length(data),2)))    %do%  { b2=fc_SD_Future[[i]];cbind.data.frame(b2$mean);}
+Point_forecast_MLR=foreach(i=1:length(seq(7,length(data),2)))   %do%  { M1=fc_MLR_Future[[i]];cbind.data.frame(M1);}
+Point_forecast_PRM=foreach(i=1:length(seq(7,length(data),2)))   %do%  { o1=fc_PRM_Future[[i]];cbind.data.frame(o1);}
+Point_forecast_SVM=foreach(i=1:length(seq(7,length(data),2)))   %do%  { o2=fc_SVM_Future[[i]];cbind.data.frame(o2);}
+Point_forecast_ANN=foreach(i=1:length(seq(7,length(data),2)))   %do%  { o3=fc_ANN_Future[[i]];cbind.data.frame(o3);}
+Point_forecast_RF=foreach(i=1:length(seq(7,length(data),2)))    %do%  { o4=fc_RF_Future[[i]];cbind.data.frame(o4);}
+fc_EL_Future=foreach(i=1:length(seq(7,length(data),2))) %do% { v1_2=Point_forecast_ARIMA[[i]];v2_2=Point_forecast_TBATS[[i]];v3_2=Point_forecast_WH[[i]];v4_2=Point_forecast_MLR[[i]];
+v5_2=Point_forecast_PRM[[i]];v6_2=Point_forecast_SVM[[i]];v7_2=Point_forecast_ANN[[i]];new=cbind.data.frame(b1=v1_2,b2=v2_2,b3=v3_2,b4=v4_2,b5=v5_2,b6=v6_2,b7=v7_2);
+colnames(new)=c("b1","b2","b3","b4","b5","b6","b7");predict(fit_EL_Future[[i]],new);}
+Point_forecast_EL=foreach(i=1:length(seq(7,length(data),2))) %do% { o5=fc_EL_Future[[i]];cbind.data.frame(o5);}
+
+a=data.frame(cbind(matrix(nrow=No_ahead,ncol=length(seq(7,length(data),2))))); for(i in 1:length(seq(7,length(data),2))){a[,i]=Point_forecast_ARIMA[[i]];colnames(a)[i]=Lob_Names[[i]];}
+b=data.frame(cbind(matrix(nrow=No_ahead,ncol=length(seq(7,length(data),2))))); for(i in 1:length(seq(7,length(data),2))){b[,i]=Point_forecast_TBATS[[i]];colnames(b)[i]=Lob_Names[[i]];}
+c=data.frame(cbind(matrix(nrow=No_ahead,ncol=length(seq(7,length(data),2))))); for(i in 1:length(seq(7,length(data),2))){c[,i]=Point_forecast_WH[[i]];colnames(c)[i]=Lob_Names[[i]];}
+d=data.frame(cbind(matrix(nrow=No_ahead,ncol=length(seq(7,length(data),2))))); for(i in 1:length(seq(7,length(data),2))){d[,i]=Point_forecast_SD[[i]];colnames(d)[i]=Lob_Names[[i]];}
+e=data.frame(cbind(matrix(nrow=No_ahead,ncol=length(seq(7,length(data),2))))); for(i in 1:length(seq(7,length(data),2))){e[,i]=Point_forecast_MLR[[i]];colnames(e)[i]=Lob_Names[[i]];}
+f=data.frame(cbind(matrix(nrow=No_ahead,ncol=length(seq(7,length(data),2))))); for(i in 1:length(seq(7,length(data),2))){f[,i]=Point_forecast_PRM[[i]];colnames(f)[i]=Lob_Names[[i]];}
+g=data.frame(cbind(matrix(nrow=No_ahead,ncol=length(seq(7,length(data),2))))); for(i in 1:length(seq(7,length(data),2))){g[,i]=Point_forecast_SVM[[i]];colnames(g)[i]=Lob_Names[[i]];}
+h=data.frame(cbind(matrix(nrow=No_ahead,ncol=length(seq(7,length(data),2))))); for(i in 1:length(seq(7,length(data),2))){h[,i]=Point_forecast_ANN[[i]];colnames(h)[i]=Lob_Names[[i]];}
+k=data.frame(cbind(matrix(nrow=No_ahead,ncol=length(seq(7,length(data),2))))); for(i in 1:length(seq(7,length(data),2))){k[,i]=Point_forecast_EL[[i]];colnames(k)[i]=Lob_Names[[i]];}
+l=data.frame(cbind(matrix(nrow=No_ahead,ncol=length(seq(7,length(data),2))))); for(i in 1:length(seq(7,length(data),2))){l[,i]=Point_forecast_RF[[i]];colnames(l)[i]=Lob_Names[[i]];}
+
+Results=function (file, ...){ require(xlsx, quietly = TRUE);objects=list(...);
+ghw=as.list(match.call(expand.dots = TRUE));objnames=as.character(ghw)[-c(1, 2)];
+nobjects=length(objects)
+for (i in 1:nobjects) {
+if (i == 1)
+write.xlsx(objects[[i]], file, sheetName = objnames[i])
+else write.xlsx(objects[[i]], file, sheetName = objnames[i],append = TRUE);}
+print(paste("Workbook", file, "has", nobjects, "worksheets."));}
+
+ARIMA=cbind.data.frame(Date_2,fl3,fk3,a); TBATS=cbind.data.frame(Date_2,fl3,fk3,b);
+Winter_Holts=cbind.data.frame(Date_2,f13,f23,c); Seasonal_Decom=cbind.data.frame(Date_2,fl3,fk3,d);
+Linear_Reg=cbind.data.frame(Date_2,fl3,fk3,e); Poisson_Reg=cbind.data.frame(Date_2,fl3,fk3,f);
+Support_Vector_Reg=cbind.data.frame(Date_2,fl3,fk3,g); Artificial_Neural=cbind.data.frame(Date_2,fl3,fk3,h);
+Random_Forest=cbind.data.frame(Date_2,fl3,fk3,l);Ensemble_Learning=cbind.data.frame(Date_2,fl3,fk3,k);
+
+Curr_date=format(Sys.time(), "%d-%b-%Y")
+Results(paste("Forecast-Report-",Curr_date,".xlsx"),Monthly_Accuracy_Summary,Daily_Accuracy_Summary,No_Days_Summary,Weekly_Accuracy_Summary,
+        ARIMA,TBATS,Winter_Holts,Seasonal_Decom,Linear_Reg,Poisson_Reg,Artificial_Neural,Random_Forest,Ensemble_Learning)        
+
+print(Monthly_Accuracy_Summary)
+print(Daily_Accuracy_Summary)
+print(No_Days_Summary)
+print(Weekly_Accuracy_Summary)
+
