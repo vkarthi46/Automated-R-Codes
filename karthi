@@ -19,19 +19,20 @@
 
 #-------------------------------------------------------------------------------------------------------------
 # Working Directory
-setwd("C:\\Users\\vkarth2\\Desktop\\POC-New\\Omagha")
+setwd()
+# Required Packages
+# install.packages("pacman")
+pacman::p_load(dplyr,data.table,zoo,DescTools,forecast,foreach,doParallel,AER,pscl,MASS,stats,e1071,kernlab,earth,caret,randomForest,nnet) 
+
 # Reading The Data
-data=read.csv("C:\\Users\\vkarth2\\Desktop\\data.csv")
+data=read.csv("C:\\Users\\vkarth2\\Desktop\\POC-New\\Amazon\\Samy\\data-till Sep'15.csv")
 Lob_Names=foreach(j=seq(6,length(data),2)) %do% { jl=colnames(data);Lob_Names=jl[j];}
 colnames(data)=c("Date","Day","WOM","Month","Year");data$Date=as.Date(data$Date,format="%d-%B-%y");data$WOM=as.factor(data$WOM);data$Day=as.factor(data$Day);
 
-# Required Packages
-pacman::p_load(dplyr,data.table,zoo,DescTools,forecast,foreach,doParallel,AER,pscl,MASS,stats,e1071,kernlab,earth,caret,randomForest,nnet) 
-
 # Required Information
-Start_Month="Aug-2015"
-Lead_time=.1
-No_Months_BF=2
+Start_Month="Jun-2015"
+Lead_time=.2
+No_Months_BF=4
 Days=7
 Year=365
 Week=round(Year/Days)
@@ -278,7 +279,7 @@ Random_Forest=cbind.data.frame(Date_2,fl3,fk3,l);Ensemble_Learning=cbind.data.fr
 
 Curr_date=format(Sys.time(), "%d-%b-%Y")
 Results(paste("Forecast-Report-",Curr_date,".xlsx"),Monthly_Accuracy_Summary,Daily_Accuracy_Summary,No_Days_Summary,Weekly_Accuracy_Summary,
-        ARIMA,TBATS,Winter_Holts,Seasonal_Decom,Linear_Reg,Poisson_Reg,Artificial_Neural,Random_Forest,Ensemble_Learning)        
+        ARIMA,TBATS,Winter_Holts,Seasonal_Decom,Linear_Reg,Poisson_Reg,Support_Vector_Reg,Artificial_Neural,Random_Forest,Ensemble_Learning)        
 
 print(Monthly_Accuracy_Summary)
 print(Daily_Accuracy_Summary)
